@@ -100,6 +100,10 @@ scripts/package_release.sh v1.0.0
 - `release/DEPLOYMENT.md`
 - `release/RELEASE_CHECKLIST.md`
 
+## 开源协议
+
+本项目采用 Apache License 2.0 开源协议，详见仓库根目录 [LICENSE](./LICENSE)。
+
 ## 回归测试
 
 发布前建议执行一次安全与功能回归：
