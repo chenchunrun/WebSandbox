@@ -1,0 +1,117 @@
+services:
+  api:
+    build: .
+    image: websandbox-api:latest
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "${API_HOST_PORT:-8000}:8000"
+    environment:
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/sandboxdb
+      REDIS_URL: redis://redis:6379/0
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_SECURE: "false"
+      MINIO_BUCKET: sandbox-artifacts
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL_TEXT: ${OPENAI_MODEL_TEXT:-gpt-4o-mini}
+      OPENAI_MODEL_VISION: ${OPENAI_MODEL_VISION:-gpt-4o-mini}
+      XGBOOST_MODEL_PATH: /app/models/xgb_model.joblib
+      GOVERNANCE_API_KEY: ${GOVERNANCE_API_KEY:-}
+      ISOLATION_MODE: local
+      SANDBOX_IMAGE: websandbox-worker:latest
+      SANDBOX_NETWORK: websandbox_default
+    depends_on:
+      - redis
+      - postgres
+      - minio
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 256
+    mem_limit: 1g
+    cpus: 1.0
+
+  worker:
+    build: .
+    image: websandbox-worker:latest
+    command: celery -A app.celery_app.celery_app worker -l info --concurrency=2
+    shm_size: 1gb
+    environment:
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/sandboxdb
+      REDIS_URL: redis://redis:6379/0
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_SECURE: "false"
+      MINIO_BUCKET: sandbox-artifacts
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL_TEXT: ${OPENAI_MODEL_TEXT:-gpt-4o-mini}
+      OPENAI_MODEL_VISION: ${OPENAI_MODEL_VISION:-gpt-4o-mini}
+      XGBOOST_MODEL_PATH: /app/models/xgb_model.joblib
+      GOVERNANCE_API_KEY: ${GOVERNANCE_API_KEY:-}
+      ISOLATION_MODE: docker_task
+      SANDBOX_IMAGE: websandbox-worker:latest
+      SANDBOX_NETWORK: websandbox_default
+      SANDBOX_CPU_LIMIT: 1.0
+      SANDBOX_MEMORY_LIMIT: 1g
+      SANDBOX_PIDS_LIMIT: 256
+    depends_on:
+      - redis
+      - postgres
+      - minio
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 512
+    mem_limit: 2g
+    cpus: 2.0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${REDIS_HOST_PORT:-16379}:6379"
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: sandboxdb
+    ports:
+      - "${POSTGRES_HOST_PORT:-15432}:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "${MINIO_HOST_PORT:-19000}:9000"
+      - "${MINIO_CONSOLE_HOST_PORT:-19001}:9001"
+    volumes:
+      - minio_data:/data
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      - minio
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    entrypoint: ["/bin/sh", "/scripts/init_minio.sh"]
+    volumes:
+      - ./scripts:/scripts
+
+volumes:
+  pg_data:
+  minio_data:
