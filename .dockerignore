@@ -1,3 +1,5 @@
+.git
+.gitignore
 .env
 .env.*
 !.env.example
@@ -15,14 +17,8 @@ htmlcov/
 .hypothesis/
 .npm/
 Library/
-.idea/
-.vscode/
-*.swp
-*.swo
-
 local*.db
 tmp_*/
 dist/
 *.log
-
 .DS_Store
