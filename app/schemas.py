@@ -81,6 +81,9 @@ class FeedbackResponse(BaseModel):
 
 class FeedbackExportResponse(BaseModel):
     count: int
+    raw_count: int | None = None
+    deduped: bool | None = None
+    dataset_version: str | None = None
     rows: list[dict[str, Any]] = Field(default_factory=list)
 
 
@@ -95,6 +98,9 @@ class BulkFeedbackResponse(BaseModel):
 
 class TrainingSampleExportResponse(BaseModel):
     count: int
+    raw_count: int | None = None
+    deduped: bool | None = None
+    dataset_version: str | None = None
     rows: list[dict[str, Any]] = Field(default_factory=list)
     filters: dict[str, Any] = Field(default_factory=dict)
 

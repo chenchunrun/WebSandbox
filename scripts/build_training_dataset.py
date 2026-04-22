@@ -6,6 +6,8 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+from app.core.dataset import dataset_version as build_dataset_version
+from app.core.dataset import sample_key as build_sample_key
 from app.db import SessionLocal
 from app.models import FeedbackRecord
 
@@ -49,6 +51,8 @@ def main() -> None:
     parser.add_argument("--to-ts", default=None)
     parser.add_argument("--only-false-positive", action="store_true")
     parser.add_argument("--balanced", action="store_true")
+    parser.add_argument("--dedup-by-sample", action="store_true", default=True)
+    parser.add_argument("--no-dedup-by-sample", dest="dedup_by_sample", action="store_false")
     parser.add_argument("--limit", type=int, default=100000)
     args = parser.parse_args()
 
@@ -72,10 +76,14 @@ def main() -> None:
             if row.human_label not in LABEL_MAP:
                 continue
             features = row.features_json or {}
+            sample_key = build_sample_key(row.url or "", row.human_label or "unknown", features)
             item = {
                 "feedback_id": row.feedback_id,
                 "task_id": row.task_id,
                 "url": row.url,
+                "sample_key": sample_key,
+                "label_source": "human_feedback",
+                "can_use_for_training": int(bool(row.human_label in LABEL_MAP)),
                 "human_label": row.human_label,
                 "target_label": LABEL_MAP[row.human_label],
                 "created_at": row.created_at.isoformat() if row.created_at else "",
@@ -85,6 +93,18 @@ def main() -> None:
                 item[col] = to_float(features.get(col))
             item["keyword_hits_json"] = json.dumps(features.get("keyword_hits", []), ensure_ascii=False)
             samples.append(item)
+
+        raw_count = len(samples)
+        if args.dedup_by_sample:
+            deduped = []
+            seen = set()
+            for sample in samples:
+                s_key = sample["sample_key"]
+                if s_key in seen:
+                    continue
+                seen.add(s_key)
+                deduped.append(sample)
+            samples = deduped
 
         if args.balanced:
             by_label = {"benign": [], "phishing": [], "malware": []}
@@ -105,6 +125,9 @@ def main() -> None:
             "feedback_id",
             "task_id",
             "url",
+            "sample_key",
+            "label_source",
+            "can_use_for_training",
             "human_label",
             "target_label",
             "created_at",
@@ -119,7 +142,21 @@ def main() -> None:
             for sample in samples:
                 writer.writerow(sample)
 
-        print(f"exported {len(samples)} training rows to {output_path}")
+        version = build_dataset_version(
+            [s["sample_key"] for s in samples],
+            {
+                "from_ts": args.from_ts,
+                "to_ts": args.to_ts,
+                "only_false_positive": args.only_false_positive,
+                "balanced": args.balanced,
+                "dedup_by_sample": args.dedup_by_sample,
+                "limit": args.limit,
+            },
+        )
+        print(
+            f"exported {len(samples)} training rows to {output_path} "
+            f"(raw_count={raw_count}, dedup_by_sample={args.dedup_by_sample}, dataset_version={version})"
+        )
     finally:
         db.close()
 

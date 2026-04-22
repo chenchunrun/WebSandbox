@@ -19,6 +19,8 @@ import joblib
 
 from app.analyzer.model_registry import registry
 from app.core.config import get_settings
+from app.core.dataset import dataset_version as build_dataset_version
+from app.core.dataset import sample_key as build_sample_key
 from app.core.metrics import metrics_registry
 from app.core.observability import log_event
 from app.core.security import (
@@ -275,6 +277,21 @@ def _collect_eval_samples(db: Session, limit: int, from_ts: str | None, to_ts: s
         X.append(_feedback_feature_vector(features))
         y_true.append(0 if row.human_label == "benign" else 1)
     return X, y_true
+
+
+def _dedup_feedback_rows(rows: list[FeedbackRecord]) -> tuple[list[FeedbackRecord], list[str]]:
+    seen: set[str] = set()
+    deduped: list[FeedbackRecord] = []
+    keys: list[str] = []
+    for row in rows:
+        features = row.features_json or {}
+        key = build_sample_key(row.url or "", row.human_label or "unknown", features)
+        if key in seen:
+            continue
+        seen.add(key)
+        keys.append(key)
+        deduped.append(row)
+    return deduped, keys
 
 
 def _query_model_events(
@@ -922,7 +939,11 @@ def submit_feedback_bulk(payload: BulkFeedbackRequest, db: Session = Depends(get
 
 
 @app.get("/feedback/export", response_model=FeedbackExportResponse)
-def export_feedback(limit: int = 500, db: Session = Depends(get_db)) -> FeedbackExportResponse:
+def export_feedback(
+    limit: int = 500,
+    dedup_by_sample: bool = True,
+    db: Session = Depends(get_db),
+) -> FeedbackExportResponse:
     if limit <= 0 or limit > 5000:
         raise HTTPException(status_code=400, detail="limit must be between 1 and 5000")
 
@@ -932,8 +953,16 @@ def export_feedback(limit: int = 500, db: Session = Depends(get_db)) -> Feedback
         .limit(limit)
         .all()
     )
+    raw_count = len(rows)
+    sample_keys: list[str] = []
+    if dedup_by_sample:
+        rows, sample_keys = _dedup_feedback_rows(rows)
+    else:
+        for row in rows:
+            sample_keys.append(build_sample_key(row.url or "", row.human_label or "unknown", row.features_json or {}))
+
     result_rows = []
-    for row in rows:
+    for row, s_key in zip(rows, sample_keys):
         result_rows.append(
             {
                 "feedback_id": row.feedback_id,
@@ -945,14 +974,25 @@ def export_feedback(limit: int = 500, db: Session = Depends(get_db)) -> Feedback
                 "note": row.note,
                 "reviewer": row.reviewer,
                 "created_at": row.created_at.isoformat() if row.created_at else None,
+                "sample_key": s_key,
+                "label_source": "human_feedback",
+                "can_use_for_training": bool(row.human_label in {"benign", "phishing", "malware"}),
                 "features": row.features_json or {},
             }
         )
-    return FeedbackExportResponse(count=len(result_rows), rows=result_rows)
+    filters = {"limit": limit, "dedup_by_sample": dedup_by_sample}
+    version = build_dataset_version(sample_keys, filters)
+    return FeedbackExportResponse(
+        count=len(result_rows),
+        raw_count=raw_count,
+        deduped=dedup_by_sample,
+        dataset_version=version,
+        rows=result_rows,
+    )
 
 
 @app.get("/feedback/export.csv")
-def export_feedback_csv(limit: int = 500, db: Session = Depends(get_db)) -> dict[str, Any]:
+def export_feedback_csv(limit: int = 500, dedup_by_sample: bool = True, db: Session = Depends(get_db)) -> dict[str, Any]:
     if limit <= 0 or limit > 5000:
         raise HTTPException(status_code=400, detail="limit must be between 1 and 5000")
 
@@ -962,6 +1002,14 @@ def export_feedback_csv(limit: int = 500, db: Session = Depends(get_db)) -> dict
         .limit(limit)
         .all()
     )
+    raw_count = len(rows)
+    sample_keys: list[str] = []
+    if dedup_by_sample:
+        rows, sample_keys = _dedup_feedback_rows(rows)
+    else:
+        for row in rows:
+            sample_keys.append(build_sample_key(row.url or "", row.human_label or "unknown", row.features_json or {}))
+
     csv_buffer = io.StringIO()
     writer = csv.DictWriter(
         csv_buffer,
@@ -969,6 +1017,9 @@ def export_feedback_csv(limit: int = 500, db: Session = Depends(get_db)) -> dict
             "feedback_id",
             "task_id",
             "url",
+            "sample_key",
+            "label_source",
+            "can_use_for_training",
             "predicted_label",
             "human_label",
             "is_false_positive",
@@ -979,12 +1030,15 @@ def export_feedback_csv(limit: int = 500, db: Session = Depends(get_db)) -> dict
         ],
     )
     writer.writeheader()
-    for row in rows:
+    for row, s_key in zip(rows, sample_keys):
         writer.writerow(
             {
                 "feedback_id": row.feedback_id,
                 "task_id": row.task_id,
                 "url": row.url,
+                "sample_key": s_key,
+                "label_source": "human_feedback",
+                "can_use_for_training": bool(row.human_label in {"benign", "phishing", "malware"}),
                 "predicted_label": row.predicted_label,
                 "human_label": row.human_label,
                 "is_false_positive": row.is_false_positive,
@@ -994,7 +1048,15 @@ def export_feedback_csv(limit: int = 500, db: Session = Depends(get_db)) -> dict
                 "features_json": json.dumps(row.features_json or {}, ensure_ascii=False),
             }
         )
-    return {"count": len(rows), "csv": csv_buffer.getvalue()}
+    filters = {"limit": limit, "dedup_by_sample": dedup_by_sample}
+    version = build_dataset_version(sample_keys, filters)
+    return {
+        "count": len(rows),
+        "raw_count": raw_count,
+        "deduped": dedup_by_sample,
+        "dataset_version": version,
+        "csv": csv_buffer.getvalue(),
+    }
 
 
 @app.get("/feedback/training-samples", response_model=TrainingSampleExportResponse)
@@ -1005,6 +1067,7 @@ def export_training_samples(
     human_label: str | None = None,
     only_false_positive: bool = False,
     balanced: bool = False,
+    dedup_by_sample: bool = True,
     db: Session = Depends(get_db),
 ) -> TrainingSampleExportResponse:
     if limit <= 0 or limit > 10000:
@@ -1042,6 +1105,14 @@ def export_training_samples(
     query = query.order_by(FeedbackRecord.created_at.desc())
 
     rows = query.limit(limit).all()
+    raw_count = len(rows)
+
+    sample_keys: list[str] = []
+    if dedup_by_sample:
+        rows, sample_keys = _dedup_feedback_rows(rows)
+    else:
+        for row in rows:
+            sample_keys.append(build_sample_key(row.url or "", row.human_label or "unknown", row.features_json or {}))
 
     if balanced:
         by_label: dict[str, list[FeedbackRecord]] = {"phishing": [], "malware": [], "benign": []}
@@ -1054,14 +1125,21 @@ def export_training_samples(
             for label in ("phishing", "malware", "benign"):
                 balanced_rows.extend(by_label[label][:min_count])
             rows = balanced_rows
+            # Recalculate keys after balancing.
+            sample_keys = [
+                build_sample_key(row.url or "", row.human_label or "unknown", row.features_json or {}) for row in rows
+            ]
 
     result_rows = []
-    for row in rows:
+    for row, s_key in zip(rows, sample_keys):
         result_rows.append(
             {
                 "feedback_id": row.feedback_id,
                 "task_id": row.task_id,
                 "url": row.url,
+                "sample_key": s_key,
+                "label_source": "human_feedback",
+                "can_use_for_training": bool(row.human_label in {"benign", "phishing", "malware"}),
                 "predicted_label": row.predicted_label,
                 "human_label": row.human_label,
                 "is_false_positive": row.is_false_positive,
@@ -1070,17 +1148,24 @@ def export_training_samples(
             }
         )
 
+    filters_payload = {
+        "limit": limit,
+        "from_ts": from_ts,
+        "to_ts": to_ts,
+        "human_label": human_label,
+        "only_false_positive": only_false_positive,
+        "balanced": balanced,
+        "dedup_by_sample": dedup_by_sample,
+    }
+    version = build_dataset_version(sample_keys, filters_payload)
+
     return TrainingSampleExportResponse(
         count=len(result_rows),
+        raw_count=raw_count,
+        deduped=dedup_by_sample,
+        dataset_version=version,
         rows=result_rows,
-        filters={
-            "limit": limit,
-            "from_ts": from_ts,
-            "to_ts": to_ts,
-            "human_label": human_label,
-            "only_false_positive": only_false_positive,
-            "balanced": balanced,
-        },
+        filters=filters_payload,
     )
 
 

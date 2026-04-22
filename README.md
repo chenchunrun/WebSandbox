@@ -222,14 +222,20 @@ curl -X POST http://localhost:8000/feedback \
 JSON:
 
 ```bash
-curl "http://localhost:8000/feedback/export?limit=1000"
+curl "http://localhost:8000/feedback/export?limit=1000&dedup_by_sample=true"
 ```
 
 CSV字符串:
 
 ```bash
-curl "http://localhost:8000/feedback/export.csv?limit=1000"
+curl "http://localhost:8000/feedback/export.csv?limit=1000&dedup_by_sample=true"
 ```
+
+导出结果新增样本治理字段：
+- `sample_key`: 基于规范化 URL + 人工标签 + 关键特征的稳定样本键
+- `label_source`: 当前固定为 `human_feedback`
+- `can_use_for_training`: 是否可用于训练
+- `dataset_version`: 导出快照指纹（用于复现训练集）
 
 ### 7) 批量反馈导入
 
@@ -247,7 +253,7 @@ curl -X POST http://localhost:8000/feedback/bulk \
 ### 8) 训练样本筛选导出
 
 ```bash
-curl "http://localhost:8000/feedback/training-samples?limit=3000&only_false_positive=true&balanced=true"
+curl "http://localhost:8000/feedback/training-samples?limit=3000&only_false_positive=true&balanced=true&dedup_by_sample=true"
 ```
 
 支持参数：
@@ -255,6 +261,7 @@ curl "http://localhost:8000/feedback/training-samples?limit=3000&only_false_posi
 - `human_label=phishing|malware|benign`
 - `only_false_positive=true|false`
 - `balanced=true|false`（按三类标签均衡采样）
+- `dedup_by_sample=true|false`
 
 ### 9) 回流统计
 
