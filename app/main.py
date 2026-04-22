@@ -24,10 +24,12 @@ from app.core.dataset import sample_key as build_sample_key
 from app.core.metrics import metrics_registry
 from app.core.observability import log_event
 from app.core.policy import (
+    detection_policy_from_dict,
     get_detection_policy,
     policy_source,
     preview_detection_policy,
     reset_detection_policy,
+    set_detection_policy,
     update_detection_policy,
 )
 from app.core.security import (
@@ -45,6 +47,10 @@ from app.schemas import (
     BulkFeedbackResponse,
     BatchAnalyzeRequest,
     DetectionPolicyResponse,
+    PolicyHistoryResponse,
+    PolicyHistoryItem,
+    PolicyRollbackRequest,
+    PolicyRollbackResponse,
     DetectionPolicyUpdateRequest,
     DetectionPolicyUpdateResponse,
     FeedbackExportResponse,
@@ -346,6 +352,47 @@ def get_policy() -> DetectionPolicyResponse:
     return DetectionPolicyResponse.model_validate(policy.as_dict())
 
 
+@app.get("/policy/history", response_model=PolicyHistoryResponse)
+def policy_history(
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_governance_auth),
+    x_actor: str | None = Header(default=None, alias="X-Actor"),
+) -> PolicyHistoryResponse:
+    if limit <= 0 or limit > 2000:
+        raise HTTPException(status_code=400, detail="limit must be between 1 and 2000")
+
+    rows = (
+        db.query(ModelEvent)
+        .filter(ModelEvent.event_type.in_(["policy_update", "policy_reset", "policy_rollback"]))
+        .order_by(ModelEvent.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    items: list[PolicyHistoryItem] = []
+    for row in rows:
+        payload = row.payload or {}
+        policy_payload = payload.get("policy")
+        items.append(
+            PolicyHistoryItem(
+                event_id=row.event_id,
+                event_type=row.event_type,
+                status=row.status,
+                actor=row.actor,
+                created_at=row.created_at.isoformat() if row.created_at else "",
+                policy=(
+                    DetectionPolicyResponse.model_validate(policy_payload)
+                    if isinstance(policy_payload, dict)
+                    else None
+                ),
+                patch=payload.get("patch") or {},
+                source=payload.get("source"),
+                dry_run=payload.get("dry_run"),
+            )
+        )
+    return PolicyHistoryResponse(count=len(items), rows=items)
+
+
 @app.post("/policy/update", response_model=DetectionPolicyUpdateResponse)
 def policy_update(
     payload: DetectionPolicyUpdateRequest,
@@ -425,6 +472,72 @@ def policy_reset(
         updated=True,
         source=policy_source(),
         policy=DetectionPolicyResponse.model_validate(policy.as_dict()),
+    )
+
+
+@app.post("/policy/rollback", response_model=PolicyRollbackResponse)
+def policy_rollback(
+    payload: PolicyRollbackRequest,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_governance_auth),
+    x_actor: str | None = Header(default=None, alias="X-Actor"),
+) -> PolicyRollbackResponse:
+    source_event = db.get(ModelEvent, payload.event_id)
+    if not source_event:
+        raise HTTPException(status_code=404, detail=f"policy event not found: {payload.event_id}")
+    if source_event.event_type not in {"policy_update", "policy_reset", "policy_rollback"}:
+        raise HTTPException(status_code=400, detail="event is not a policy event")
+
+    event_payload = source_event.payload or {}
+    policy_payload = event_payload.get("policy")
+    if not isinstance(policy_payload, dict):
+        raise HTTPException(status_code=400, detail="source policy payload missing")
+
+    try:
+        target_policy = detection_policy_from_dict(policy_payload)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"invalid policy payload on source event: {exc}") from exc
+
+    if payload.dry_run:
+        _log_model_event(
+            db=db,
+            event_type="policy_rollback",
+            status="dry_run",
+            payload={
+                "from_event_id": payload.event_id,
+                "source_event_type": source_event.event_type,
+                "source": "dry_run_preview",
+                "dry_run": True,
+                "policy": target_policy.as_dict(),
+            },
+            actor=x_actor or "system",
+        )
+        return PolicyRollbackResponse(
+            rolled_back=False,
+            source="dry_run_preview",
+            from_event_id=payload.event_id,
+            policy=DetectionPolicyResponse.model_validate(target_policy.as_dict()),
+        )
+
+    applied = set_detection_policy(target_policy)
+    _log_model_event(
+        db=db,
+        event_type="policy_rollback",
+        status="ok",
+        payload={
+            "from_event_id": payload.event_id,
+            "source_event_type": source_event.event_type,
+            "source": policy_source(),
+            "dry_run": False,
+            "policy": applied.as_dict(),
+        },
+        actor=x_actor or "system",
+    )
+    return PolicyRollbackResponse(
+        rolled_back=True,
+        source=policy_source(),
+        from_event_id=payload.event_id,
+        policy=DetectionPolicyResponse.model_validate(applied.as_dict()),
     )
 
 

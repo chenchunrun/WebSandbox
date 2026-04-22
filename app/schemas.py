@@ -243,3 +243,32 @@ class DetectionPolicyUpdateResponse(BaseModel):
     updated: bool
     source: str
     policy: DetectionPolicyResponse
+
+
+class PolicyHistoryItem(BaseModel):
+    event_id: str
+    event_type: str
+    status: str
+    actor: str | None = None
+    created_at: str
+    policy: DetectionPolicyResponse | None = None
+    patch: dict[str, Any] = Field(default_factory=dict)
+    source: str | None = None
+    dry_run: bool | None = None
+
+
+class PolicyHistoryResponse(BaseModel):
+    count: int
+    rows: list[PolicyHistoryItem] = Field(default_factory=list)
+
+
+class PolicyRollbackRequest(BaseModel):
+    event_id: str
+    dry_run: bool = False
+
+
+class PolicyRollbackResponse(BaseModel):
+    rolled_back: bool
+    source: str
+    from_event_id: str
+    policy: DetectionPolicyResponse

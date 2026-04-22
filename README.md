@@ -39,6 +39,7 @@
   - `GET /model/history/verify` 审计哈希链校验
   - `GET /policy` 查看当前判定与升级策略
   - `POST /policy/update` 与 `POST /policy/reset` 运行时策略热更新/回退（治理鉴权）
+  - `GET /policy/history` 与 `POST /policy/rollback` 策略历史与按版本回滚
 
 ## 架构组件
 
@@ -383,7 +384,31 @@ curl -X POST http://localhost:8000/policy/reset \
 
 说明：
 - 运行时策略覆盖持久化在 `policy_configs` 表，API 与 Worker 进程共享同一份策略。
-- 变更会写入 `model_events` 审计链（`policy_update` / `policy_reset`）。
+- 变更会写入 `model_events` 审计链（`policy_update` / `policy_reset` / `policy_rollback`）。
+
+查看策略变更历史：
+
+```bash
+curl -H "X-API-Key: change-me" -H "X-Actor: auditor" "http://localhost:8000/policy/history?limit=50"
+```
+
+按历史事件回滚策略（支持 dry-run）：
+
+```bash
+curl -X POST http://localhost:8000/policy/rollback \
+  -H "X-API-Key: change-me" \
+  -H "X-Actor: sec-admin" \
+  -H "Content-Type: application/json" \
+  -d '{"event_id":"<policy-event-id>","dry_run":true}'
+```
+
+```bash
+curl -X POST http://localhost:8000/policy/rollback \
+  -H "X-API-Key: change-me" \
+  -H "X-Actor: sec-admin" \
+  -H "Content-Type: application/json" \
+  -d '{"event_id":"<policy-event-id>","dry_run":false}'
+```
 
 ## XGBoost模型接入
 

@@ -92,7 +92,7 @@ def _build_policy_from_settings() -> DetectionPolicy:
 
 
 def _policy_from_payload(payload: dict[str, Any]) -> DetectionPolicy:
-    return DetectionPolicy(
+    candidate = DetectionPolicy(
         rule=RuleThresholdPolicy(
             malicious_threshold=float(payload.get("rule", {}).get("malicious_threshold")),
             benign_threshold=float(payload.get("rule", {}).get("benign_threshold")),
@@ -107,6 +107,8 @@ def _policy_from_payload(payload: dict[str, Any]) -> DetectionPolicy:
             high_risk_xhr_threshold=int(payload.get("deep_escalation", {}).get("high_risk_xhr_threshold")),
         ),
     )
+    _validate(candidate)
+    return candidate
 
 
 def _load_policy_from_db() -> tuple[DetectionPolicy | None, str]:
@@ -254,6 +256,31 @@ def update_detection_policy(
 
     _set_cache(candidate, "db_override")
     return candidate
+
+
+def set_detection_policy(policy: DetectionPolicy) -> DetectionPolicy:
+    from app.db import SessionLocal
+    from app.models import PolicyConfig
+
+    _validate(policy)
+    db = SessionLocal()
+    try:
+        row = db.get(PolicyConfig, 1)
+        if not row:
+            row = PolicyConfig(config_id=1, policy_json=policy.as_dict())
+            db.add(row)
+        else:
+            row.policy_json = policy.as_dict()
+        db.commit()
+    finally:
+        db.close()
+
+    _set_cache(policy, "db_override")
+    return policy
+
+
+def detection_policy_from_dict(payload: dict[str, Any]) -> DetectionPolicy:
+    return _policy_from_payload(payload)
 
 
 def reset_detection_policy() -> DetectionPolicy:
