@@ -177,6 +177,13 @@ curl -X POST http://localhost:8000/analyze \
 curl http://localhost:8000/analyze/<task_id>
 ```
 
+`verdict` 字段包含基础标签与风险标签体系：
+- `label`: `phishing|malware|benign`
+- `risk_type`: 如 `phishing|fake_brand|malware_delivery|suspicious_form|benign|unknown`
+- `action`: `block|review|observe`
+- `reason_codes`: 可枚举原因码数组（用于策略联动与统计）
+- `evidence_score`: 0-100 证据强度分数
+
 ### 3) 批量分析(JSON)
 
 ```bash

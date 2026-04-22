@@ -18,6 +18,59 @@ from app.storage import ArtifactStore
 settings = get_settings()
 
 
+def _reason_codes(features: dict[str, Any], label: str) -> list[str]:
+    codes: list[str] = []
+    if features.get("is_new_domain"):
+        codes.append("NEW_DOMAIN")
+    if features.get("self_signed_cert"):
+        codes.append("CERT_SELF_SIGNED")
+    if features.get("brand_domain_mismatch"):
+        codes.append("BRAND_DOMAIN_MISMATCH")
+    if float(features.get("cross_domain_form_submit", 0) or 0) > 0:
+        codes.append("CROSS_DOMAIN_FORM")
+    if float(features.get("hidden_iframe_count", 0) or 0) > 0:
+        codes.append("HIDDEN_IFRAME")
+    if float(features.get("js_obfuscation_hits", 0) or 0) > 0:
+        codes.append("JS_OBFUSCATION")
+    if float(features.get("keyword_hit_count", 0) or 0) > 0:
+        codes.append("RISK_KEYWORD")
+    if float(features.get("high_risk_xhr_count", 0) or 0) > 0:
+        codes.append("HIGH_RISK_XHR")
+
+    if not codes and label == "benign":
+        codes.append("NO_HIGH_RISK_SIGNAL")
+    if not codes and label in {"phishing", "malware"}:
+        codes.append("MODEL_RISK_SIGNAL")
+    return codes
+
+
+def _risk_type(label: str, features: dict[str, Any]) -> str:
+    if label == "benign":
+        return "benign"
+    if label == "malware":
+        return "malware_delivery"
+    if features.get("brand_domain_mismatch"):
+        return "fake_brand"
+    if float(features.get("cross_domain_form_submit", 0) or 0) > 0:
+        return "suspicious_form"
+    if float(features.get("keyword_hit_count", 0) or 0) > 0:
+        return "phishing"
+    return "unknown"
+
+
+def _action(label: str, confidence: float) -> str:
+    if label in {"phishing", "malware"} and confidence >= 0.8:
+        return "block"
+    if label == "benign" and confidence >= 0.7:
+        return "observe"
+    return "review"
+
+
+def _evidence_score(confidence: float, reason_codes: list[str], evidence: list[str]) -> int:
+    score = (confidence * 70.0) + (len(reason_codes) * 5.0) + (len(evidence) * 3.0)
+    return max(0, min(100, int(round(score))))
+
+
 def run_analysis(task_id: str, url: str, depth: str, callback_url: str | None = None) -> dict[str, Any]:
     started = time.perf_counter()
     layers: list[str] = ["layer2_static_started", "layer3_sandbox_started"]
@@ -95,20 +148,40 @@ def run_analysis(task_id: str, url: str, depth: str, callback_url: str | None = 
         analyzer = LLMAnalyzer()
         screenshot_bytes = store.read_bytes(artifacts.desktop_screenshot_path or "")
         llm_verdict = analyzer.analyze(features, features.get("text_excerpt", ""), screenshot_bytes)
+        label = llm_verdict.get("label", "benign")
+        confidence = float(llm_verdict.get("confidence", 0.5))
+        evidence = llm_verdict.get("evidence", [])
+        reason_codes = llm_verdict.get("reason_codes") or _reason_codes(features, label)
         verdict = {
-            "label": llm_verdict["label"],
-            "confidence": float(llm_verdict["confidence"]),
-            "evidence": llm_verdict.get("evidence", []),
+            "label": label,
+            "confidence": confidence,
+            "evidence": evidence,
             "brand_target": llm_verdict.get("brand_target"),
+            "risk_type": llm_verdict.get("risk_type") or _risk_type(label, features),
+            "action": llm_verdict.get("action") or _action(label, confidence),
+            "reason_codes": reason_codes,
+            "evidence_score": int(
+                llm_verdict.get("evidence_score")
+                if llm_verdict.get("evidence_score") is not None
+                else _evidence_score(confidence, reason_codes, evidence)
+            ),
         }
         stage("llm_reviewing_succeeded", label=verdict["label"])
         layers.append("layer4_llm_vlm_executed")
     else:
+        label = decision.label
+        confidence = float(decision.confidence)
+        evidence = decision.evidence
+        reason_codes = _reason_codes(features, label)
         verdict = {
-            "label": decision.label,
-            "confidence": decision.confidence,
-            "evidence": decision.evidence,
+            "label": label,
+            "confidence": confidence,
+            "evidence": evidence,
             "brand_target": features.get("brand_target"),
+            "risk_type": _risk_type(label, features),
+            "action": _action(label, confidence),
+            "reason_codes": reason_codes,
+            "evidence_score": _evidence_score(confidence, reason_codes, evidence),
         }
 
     missing_artifacts: list[str] = []
@@ -163,6 +236,12 @@ def run_analysis(task_id: str, url: str, depth: str, callback_url: str | None = 
             "analysis_state": {
                 "current": "finished",
                 "history": stage_history,
+            },
+            "verdict_details": {
+                "risk_type": verdict.get("risk_type"),
+                "action": verdict.get("action"),
+                "reason_codes": verdict.get("reason_codes", []),
+                "evidence_score": verdict.get("evidence_score"),
             },
         },
     }

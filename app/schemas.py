@@ -35,6 +35,10 @@ class Verdict(BaseModel):
     confidence: float
     evidence: list[str] = Field(default_factory=list)
     brand_target: str | None = None
+    risk_type: str | None = None
+    action: str | None = None
+    reason_codes: list[str] = Field(default_factory=list)
+    evidence_score: int | None = None
 
 
 class Collected(BaseModel):

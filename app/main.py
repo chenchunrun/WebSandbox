@@ -80,6 +80,7 @@ def require_governance_auth(x_api_key: str | None = Header(default=None, alias="
 
 def _row_to_response(row: AnalysisTask) -> AnalyzeResult:
     metadata = row.metadata_json or {}
+    verdict_details = metadata.get("verdict_details", {})
     missing_artifacts = metadata.get("missing_artifacts")
     if missing_artifacts is None:
         missing_artifacts = []
@@ -92,6 +93,10 @@ def _row_to_response(row: AnalysisTask) -> AnalyzeResult:
             "confidence": row.confidence,
             "evidence": row.evidence or [],
             "brand_target": row.brand_target,
+            "risk_type": verdict_details.get("risk_type"),
+            "action": verdict_details.get("action"),
+            "reason_codes": verdict_details.get("reason_codes", []),
+            "evidence_score": verdict_details.get("evidence_score"),
         }
         if row.label
         else None,
