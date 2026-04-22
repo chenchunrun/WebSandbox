@@ -19,6 +19,7 @@ import joblib
 
 from app.analyzer.model_registry import registry
 from app.core.config import get_settings
+from app.core.metrics import metrics_registry
 from app.core.observability import log_event
 from app.core.security import (
     assert_callback_url_safe,
@@ -300,6 +301,11 @@ def _query_model_events(
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/metrics")
+def metrics() -> dict[str, Any]:
+    return metrics_registry.snapshot()
 
 
 @app.get("/model/status", response_model=ModelStatusResponse)

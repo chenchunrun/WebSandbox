@@ -178,8 +178,10 @@ def run_analysis(task_id: str, url: str, depth: str, callback_url: str | None = 
             )
             httpx.post(callback_url, json=result, timeout=10)
             stage("callbacking_succeeded")
+            log_event("callback_done", task_id=task_id, depth=depth, status="ok")
         except Exception:
             stage("callbacking_failed", status="error")
+            log_event("callback_done", task_id=task_id, depth=depth, status="error")
             pass
 
     return result

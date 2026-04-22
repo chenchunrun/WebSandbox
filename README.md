@@ -141,6 +141,10 @@ scripts/run_async_e2e_suite.sh
 - 模型路径白名单约束
 - 异步 E2E（使用 `scripts/run_async_e2e_suite.sh`）
 
+运行指标接口：
+
+- `GET /metrics`：返回进程内聚合指标（计数器与耗时聚合），可用于基础监控与告警接入。
+
 ## API示例
 
 ### 1) 同步分析
