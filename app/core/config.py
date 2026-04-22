@@ -62,6 +62,7 @@ class Settings(BaseSettings):
     deep_escalation_enabled: bool = True
     deep_escalation_keyword_hit_threshold: int = 2
     deep_escalation_high_risk_xhr_threshold: int = 1
+    policy_cache_ttl_seconds: int = 2
 
 
 @lru_cache

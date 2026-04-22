@@ -214,3 +214,32 @@ class DetectionPolicyResponse(BaseModel):
     rule: RulePolicySchema
     action: ActionPolicySchema
     deep_escalation: DeepEscalationPolicySchema
+
+
+class RulePolicyUpdate(BaseModel):
+    malicious_threshold: float | None = Field(default=None, ge=0, le=1)
+    benign_threshold: float | None = Field(default=None, ge=0, le=1)
+
+
+class ActionPolicyUpdate(BaseModel):
+    block_confidence: float | None = Field(default=None, ge=0, le=1)
+    benign_observe_confidence: float | None = Field(default=None, ge=0, le=1)
+
+
+class DeepEscalationPolicyUpdate(BaseModel):
+    enabled: bool | None = None
+    keyword_hit_threshold: int | None = Field(default=None, ge=0)
+    high_risk_xhr_threshold: int | None = Field(default=None, ge=0)
+
+
+class DetectionPolicyUpdateRequest(BaseModel):
+    rule: RulePolicyUpdate | None = None
+    action: ActionPolicyUpdate | None = None
+    deep_escalation: DeepEscalationPolicyUpdate | None = None
+    dry_run: bool = False
+
+
+class DetectionPolicyUpdateResponse(BaseModel):
+    updated: bool
+    source: str
+    policy: DetectionPolicyResponse

@@ -57,3 +57,11 @@ class ModelEvent(Base):
     event_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
     payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class PolicyConfig(Base):
+    __tablename__ = "policy_configs"
+
+    config_id: Mapped[int] = mapped_column(primary_key=True, default=1)
+    policy_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

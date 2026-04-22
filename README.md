@@ -38,6 +38,7 @@
   - `GET /model/history` 模型治理审计日志
   - `GET /model/history/verify` 审计哈希链校验
   - `GET /policy` 查看当前判定与升级策略
+  - `POST /policy/update` 与 `POST /policy/reset` 运行时策略热更新/回退（治理鉴权）
 
 ## 架构组件
 
@@ -88,6 +89,7 @@ docker compose up --build
 - 规则阈值：`RULE_MALICIOUS_THRESHOLD` / `RULE_BENIGN_THRESHOLD`
 - 动作阈值：`ACTION_BLOCK_CONFIDENCE` / `ACTION_BENIGN_OBSERVE_CONFIDENCE`
 - 交互升级策略：`DEEP_ESCALATION_ENABLED`、`DEEP_ESCALATION_KEYWORD_HIT_THRESHOLD`、`DEEP_ESCALATION_HIGH_RISK_XHR_THRESHOLD`
+- 跨进程策略缓存TTL：`POLICY_CACHE_TTL_SECONDS`（默认2秒）
 
 模型治理接口可选鉴权：
 - 设置 `GOVERNANCE_API_KEY` 后，所有 `/model/*` 接口必须携带 `X-API-Key`。
@@ -335,6 +337,53 @@ curl -H "X-API-Key: change-me" -H "X-Actor: auditor" "http://localhost:8000/mode
 审计完整性说明：
 - `model_events` 使用 `prev_hash + event_hash` 链式签名，支持离线/在线校验篡改。
 - 若是已存在数据库（非全新初始化），新增字段需要执行 schema migration（`ALTER TABLE model_events ADD COLUMN prev_hash ...`, `event_hash ...`）。
+
+### 11) 运行时策略热更新
+
+查看当前策略：
+
+```bash
+curl http://localhost:8000/policy
+```
+
+预览策略更新（不生效）：
+
+```bash
+curl -X POST http://localhost:8000/policy/update \
+  -H "X-API-Key: change-me" \
+  -H "X-Actor: sec-admin" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "rule": {"malicious_threshold": 0.85},
+    "deep_escalation": {"keyword_hit_threshold": 3},
+    "dry_run": true
+  }'
+```
+
+应用策略更新（立即生效）：
+
+```bash
+curl -X POST http://localhost:8000/policy/update \
+  -H "X-API-Key: change-me" \
+  -H "X-Actor: sec-admin" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "rule": {"malicious_threshold": 0.85, "benign_threshold": 0.2},
+    "action": {"block_confidence": 0.82}
+  }'
+```
+
+回退到环境默认策略：
+
+```bash
+curl -X POST http://localhost:8000/policy/reset \
+  -H "X-API-Key: change-me" \
+  -H "X-Actor: sec-admin"
+```
+
+说明：
+- 运行时策略覆盖持久化在 `policy_configs` 表，API 与 Worker 进程共享同一份策略。
+- 变更会写入 `model_events` 审计链（`policy_update` / `policy_reset`）。
 
 ## XGBoost模型接入
 

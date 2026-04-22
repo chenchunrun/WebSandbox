@@ -23,7 +23,13 @@ from app.core.dataset import dataset_version as build_dataset_version
 from app.core.dataset import sample_key as build_sample_key
 from app.core.metrics import metrics_registry
 from app.core.observability import log_event
-from app.core.policy import get_detection_policy
+from app.core.policy import (
+    get_detection_policy,
+    policy_source,
+    preview_detection_policy,
+    reset_detection_policy,
+    update_detection_policy,
+)
 from app.core.security import (
     assert_callback_url_safe,
     assert_public_http_url,
@@ -39,6 +45,8 @@ from app.schemas import (
     BulkFeedbackResponse,
     BatchAnalyzeRequest,
     DetectionPolicyResponse,
+    DetectionPolicyUpdateRequest,
+    DetectionPolicyUpdateResponse,
     FeedbackExportResponse,
     FeedbackStatsResponse,
     FeedbackRequest,
@@ -336,6 +344,88 @@ def metrics() -> dict[str, Any]:
 def get_policy() -> DetectionPolicyResponse:
     policy = get_detection_policy()
     return DetectionPolicyResponse.model_validate(policy.as_dict())
+
+
+@app.post("/policy/update", response_model=DetectionPolicyUpdateResponse)
+def policy_update(
+    payload: DetectionPolicyUpdateRequest,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_governance_auth),
+    x_actor: str | None = Header(default=None, alias="X-Actor"),
+) -> DetectionPolicyUpdateResponse:
+    patch = payload.model_dump(exclude_none=True)
+    if "dry_run" in patch:
+        patch.pop("dry_run")
+    if not patch:
+        raise HTTPException(status_code=400, detail="empty policy patch")
+
+    rule_patch = patch.get("rule") or {}
+    action_patch = patch.get("action") or {}
+    deep_patch = patch.get("deep_escalation") or {}
+
+    try:
+        candidate = (
+            preview_detection_policy(
+                rule_malicious_threshold=rule_patch.get("malicious_threshold"),
+                rule_benign_threshold=rule_patch.get("benign_threshold"),
+                action_block_confidence=action_patch.get("block_confidence"),
+                action_benign_observe_confidence=action_patch.get("benign_observe_confidence"),
+                deep_escalation_enabled=deep_patch.get("enabled"),
+                deep_escalation_keyword_hit_threshold=deep_patch.get("keyword_hit_threshold"),
+                deep_escalation_high_risk_xhr_threshold=deep_patch.get("high_risk_xhr_threshold"),
+            )
+            if payload.dry_run
+            else update_detection_policy(
+                rule_malicious_threshold=rule_patch.get("malicious_threshold"),
+                rule_benign_threshold=rule_patch.get("benign_threshold"),
+                action_block_confidence=action_patch.get("block_confidence"),
+                action_benign_observe_confidence=action_patch.get("benign_observe_confidence"),
+                deep_escalation_enabled=deep_patch.get("enabled"),
+                deep_escalation_keyword_hit_threshold=deep_patch.get("keyword_hit_threshold"),
+                deep_escalation_high_risk_xhr_threshold=deep_patch.get("high_risk_xhr_threshold"),
+            )
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    _log_model_event(
+        db=db,
+        event_type="policy_update",
+        status="ok" if not payload.dry_run else "dry_run",
+        payload={
+            "patch": patch,
+            "source": "dry_run_preview" if payload.dry_run else policy_source(),
+            "dry_run": payload.dry_run,
+            "policy": candidate.as_dict(),
+        },
+        actor=x_actor or "system",
+    )
+    return DetectionPolicyUpdateResponse(
+        updated=not payload.dry_run,
+        source="dry_run_preview" if payload.dry_run else policy_source(),
+        policy=DetectionPolicyResponse.model_validate(candidate.as_dict()),
+    )
+
+
+@app.post("/policy/reset", response_model=DetectionPolicyUpdateResponse)
+def policy_reset(
+    db: Session = Depends(get_db),
+    _: None = Depends(require_governance_auth),
+    x_actor: str | None = Header(default=None, alias="X-Actor"),
+) -> DetectionPolicyUpdateResponse:
+    policy = reset_detection_policy()
+    _log_model_event(
+        db=db,
+        event_type="policy_reset",
+        status="ok",
+        payload={"source": policy_source(), "policy": policy.as_dict()},
+        actor=x_actor or "system",
+    )
+    return DetectionPolicyUpdateResponse(
+        updated=True,
+        source=policy_source(),
+        policy=DetectionPolicyResponse.model_validate(policy.as_dict()),
+    )
 
 
 @app.get("/model/status", response_model=ModelStatusResponse)
