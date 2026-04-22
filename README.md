@@ -37,6 +37,7 @@
   - `POST /model/promote` 与 `POST /model/rollback` 模型晋升/回滚
   - `GET /model/history` 模型治理审计日志
   - `GET /model/history/verify` 审计哈希链校验
+  - `GET /policy` 查看当前判定与升级策略
 
 ## 架构组件
 
@@ -82,6 +83,11 @@ docker compose up --build
 - DOM 字符预算：`MAX_DOM_CHARS=600000`
 - XHR/Fetch 事件预算：`MAX_NETWORK_EVENTS=300`
 - 重定向链预算：`MAX_REDIRECT_CHAIN=20`
+
+默认启用策略引擎配置（可按环境调整）：
+- 规则阈值：`RULE_MALICIOUS_THRESHOLD` / `RULE_BENIGN_THRESHOLD`
+- 动作阈值：`ACTION_BLOCK_CONFIDENCE` / `ACTION_BENIGN_OBSERVE_CONFIDENCE`
+- 交互升级策略：`DEEP_ESCALATION_ENABLED`、`DEEP_ESCALATION_KEYWORD_HIT_THRESHOLD`、`DEEP_ESCALATION_HIGH_RISK_XHR_THRESHOLD`
 
 模型治理接口可选鉴权：
 - 设置 `GOVERNANCE_API_KEY` 后，所有 `/model/*` 接口必须携带 `X-API-Key`。

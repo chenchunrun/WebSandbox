@@ -9,6 +9,7 @@ from app.analyzer.llm import LLMAnalyzer
 from app.analyzer.rules import RuleModel
 from app.core.config import get_settings
 from app.core.observability import log_event
+from app.core.policy import get_detection_policy
 from app.core.security import assert_callback_url_safe
 from app.crawler.sandbox_runner import SandboxRunner
 from app.extractor.features import extract_features
@@ -59,9 +60,10 @@ def _risk_type(label: str, features: dict[str, Any]) -> str:
 
 
 def _action(label: str, confidence: float) -> str:
-    if label in {"phishing", "malware"} and confidence >= 0.8:
+    policy = get_detection_policy()
+    if label in {"phishing", "malware"} and confidence >= policy.action.block_confidence:
         return "block"
-    if label == "benign" and confidence >= 0.7:
+    if label == "benign" and confidence >= policy.action.benign_observe_confidence:
         return "observe"
     return "review"
 
@@ -101,6 +103,7 @@ def run_analysis(task_id: str, url: str, depth: str, callback_url: str | None = 
         )
         stage_started = now
 
+    policy = get_detection_policy()
     runner = SandboxRunner()
     stage("crawling_started")
     artifacts = runner.run(url, depth, task_id)
@@ -141,6 +144,43 @@ def run_analysis(task_id: str, url: str, depth: str, callback_url: str | None = 
     decision = rule_model.decide(features)
     stage("rule_scoring_succeeded", tier=decision.tier, label=decision.label)
     layers.append("layer3_rule_model_done")
+
+    if policy.deep_escalation.should_escalate(depth, decision.tier, features):
+        stage("interaction_escalation_started")
+        escalated_depth = "deep"
+        artifacts = runner.run(url, escalated_depth, task_id)
+        stage("interaction_escalation_succeeded")
+        layers.append("layer4_interaction_probe_executed")
+        if settings.isolation_mode == "docker_task":
+            layers.append("layer4_isolated_container_executed")
+        if runner.last_execution.get("fallback_used"):
+            layers.append("layer4_local_fallback_executed")
+
+        stage("persisting_escalation_artifacts_started")
+        crawl_json_path = store.upload_json(
+            f"{task_id}/crawl.deep.json",
+            {
+                "raw_response": artifacts.raw_response,
+                "final_url": artifacts.final_url,
+                "redirect_chain": artifacts.redirect_chain,
+                "ssl": artifacts.ssl,
+                "network_events": artifacts.network_events,
+                "cta_interaction": artifacts.cta_interaction,
+            },
+        )
+        stage("persisting_escalation_artifacts_succeeded")
+
+        stage("feature_reextracting_started")
+        features = extract_features(
+            url=artifacts.final_url,
+            dom_html=artifacts.dom_html,
+            ssl=artifacts.ssl,
+            network_events=artifacts.network_events,
+        )
+        stage("feature_reextracting_succeeded")
+        stage("rule_rescoring_started")
+        decision = rule_model.decide(features)
+        stage("rule_rescoring_succeeded", tier=decision.tier, label=decision.label)
 
     verdict: dict[str, Any]
     if decision.tier == "gray":
@@ -230,6 +270,7 @@ def run_analysis(task_id: str, url: str, depth: str, callback_url: str | None = 
             "resource_budget": (artifacts.raw_response or {}).get("resource_budget", {}),
             "isolation_mode": settings.isolation_mode,
             "execution": runner.last_execution,
+            "policy": policy.as_dict(),
             "analysis_completeness": analysis_completeness,
             "collection_quality": collection_quality,
             "missing_artifacts": missing_artifacts,

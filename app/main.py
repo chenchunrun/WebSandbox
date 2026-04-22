@@ -23,6 +23,7 @@ from app.core.dataset import dataset_version as build_dataset_version
 from app.core.dataset import sample_key as build_sample_key
 from app.core.metrics import metrics_registry
 from app.core.observability import log_event
+from app.core.policy import get_detection_policy
 from app.core.security import (
     assert_callback_url_safe,
     assert_public_http_url,
@@ -37,6 +38,7 @@ from app.schemas import (
     BulkFeedbackRequest,
     BulkFeedbackResponse,
     BatchAnalyzeRequest,
+    DetectionPolicyResponse,
     FeedbackExportResponse,
     FeedbackStatsResponse,
     FeedbackRequest,
@@ -328,6 +330,12 @@ def health() -> dict[str, str]:
 @app.get("/metrics")
 def metrics() -> dict[str, Any]:
     return metrics_registry.snapshot()
+
+
+@app.get("/policy", response_model=DetectionPolicyResponse)
+def get_policy() -> DetectionPolicyResponse:
+    policy = get_detection_policy()
+    return DetectionPolicyResponse.model_validate(policy.as_dict())
 
 
 @app.get("/model/status", response_model=ModelStatusResponse)

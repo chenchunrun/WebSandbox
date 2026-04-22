@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.analyzer.model_registry import registry
+from app.core.policy import get_detection_policy
 
 
 @dataclass
@@ -62,14 +63,15 @@ class RuleModel:
         return decision
 
     def _score_to_decision(self, score: float, features: dict[str, Any]) -> RuleDecision:
+        policy = get_detection_policy()
         evidence = []
         if features.get("brand_domain_mismatch"):
             evidence.append("域名与品牌不匹配")
         if features.get("cross_domain_form_submit", 0) > 0:
             evidence.append("跨域表单提交")
 
-        if score >= 0.82:
+        if score >= policy.rule.malicious_threshold:
             return RuleDecision(tier="malicious", label="phishing", confidence=score, evidence=evidence)
-        if score <= 0.25:
+        if score <= policy.rule.benign_threshold:
             return RuleDecision(tier="benign", label="benign", confidence=1 - score, evidence=evidence)
         return RuleDecision(tier="gray", label="benign", confidence=0.5, evidence=evidence)

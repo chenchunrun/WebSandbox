@@ -192,3 +192,25 @@ class ModelHistoryVerifyResponse(BaseModel):
     first_error_event_id: str | None = None
     message: str
     last_hash: str | None = None
+
+
+class RulePolicySchema(BaseModel):
+    malicious_threshold: float
+    benign_threshold: float
+
+
+class ActionPolicySchema(BaseModel):
+    block_confidence: float
+    benign_observe_confidence: float
+
+
+class DeepEscalationPolicySchema(BaseModel):
+    enabled: bool
+    keyword_hit_threshold: int
+    high_risk_xhr_threshold: int
+
+
+class DetectionPolicyResponse(BaseModel):
+    rule: RulePolicySchema
+    action: ActionPolicySchema
+    deep_escalation: DeepEscalationPolicySchema

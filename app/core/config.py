@@ -55,6 +55,13 @@ class Settings(BaseSettings):
     queue_retry: str = "retry"
     worker_queues: str = "quick,standard,deep,retry"
     governance_api_key: str | None = None
+    rule_malicious_threshold: float = 0.82
+    rule_benign_threshold: float = 0.25
+    action_block_confidence: float = 0.8
+    action_benign_observe_confidence: float = 0.7
+    deep_escalation_enabled: bool = True
+    deep_escalation_keyword_hit_threshold: int = 2
+    deep_escalation_high_risk_xhr_threshold: int = 1
 
 
 @lru_cache
