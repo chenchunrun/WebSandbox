@@ -50,6 +50,10 @@ class AnalyzeResult(BaseModel):
     verdict: Verdict | None = None
     layers: list[str] = Field(default_factory=list)
     collected: Collected | None = None
+    analysis_state: dict[str, Any] = Field(default_factory=dict)
+    analysis_completeness: str | None = None
+    collection_quality: str | None = None
+    missing_artifacts: list[str] = Field(default_factory=list)
     processing_time_ms: int | None = None
     error: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)

@@ -19,6 +19,7 @@ import joblib
 
 from app.analyzer.model_registry import registry
 from app.core.config import get_settings
+from app.core.observability import log_event
 from app.core.security import (
     assert_callback_url_safe,
     assert_public_http_url,
@@ -77,6 +78,11 @@ def require_governance_auth(x_api_key: str | None = Header(default=None, alias="
 
 
 def _row_to_response(row: AnalysisTask) -> AnalyzeResult:
+    metadata = row.metadata_json or {}
+    missing_artifacts = metadata.get("missing_artifacts")
+    if missing_artifacts is None:
+        missing_artifacts = []
+    analysis_state = metadata.get("analysis_state") or {}
     return AnalyzeResult(
         task_id=row.task_id,
         status=row.status,
@@ -90,9 +96,13 @@ def _row_to_response(row: AnalysisTask) -> AnalyzeResult:
         else None,
         layers=row.layers or [],
         collected=row.collected,
+        analysis_state=analysis_state,
+        analysis_completeness=metadata.get("analysis_completeness"),
+        collection_quality=metadata.get("collection_quality"),
+        missing_artifacts=missing_artifacts,
         processing_time_ms=int(row.processing_time_ms) if row.processing_time_ms else None,
         error=row.error,
-        metadata=row.metadata_json or {},
+        metadata=metadata,
     )
 
 
@@ -722,14 +732,23 @@ def analyze(payload: AnalyzeRequest, db: Session = Depends(get_db)) -> AnalyzeRe
         url=str(payload.url),
         depth=payload.depth.value,
         status="queued",
+        metadata_json={"analysis_state": {"current": "queued", "history": [{"stage": "queued", "status": "ok"}]}},
     )
     db.add(row)
     db.commit()
+    log_event("task_queued", task_id=task_id, url=str(payload.url), depth=payload.depth.value, mode=payload.mode)
 
     if payload.mode == "sync":
         try:
             row.status = "running"
+            row.metadata_json = {
+                "analysis_state": {
+                    "current": "running",
+                    "history": [{"stage": "queued", "status": "ok"}, {"stage": "running", "status": "ok"}],
+                }
+            }
             db.commit()
+            log_event("task_running", task_id=task_id, url=str(payload.url), depth=payload.depth.value, mode="sync")
             result = run_analysis(task_id, str(payload.url), payload.depth.value, callback_url)
             row = db.get(AnalysisTask, task_id)
             row.status = "done"
@@ -740,13 +759,30 @@ def analyze(payload: AnalyzeRequest, db: Session = Depends(get_db)) -> AnalyzeRe
             row.layers = result.get("layers", [])
             row.collected = result.get("collected", {})
             row.metadata_json = result.get("metadata", {})
+            if row.metadata_json is not None:
+                row.metadata_json["analysis_state"] = result.get("analysis_state", {})
             row.processing_time_ms = result.get("processing_time_ms")
             db.commit()
+            log_event(
+                "task_done",
+                task_id=task_id,
+                url=str(payload.url),
+                depth=payload.depth.value,
+                mode="sync",
+                processing_time_ms=result.get("processing_time_ms"),
+            )
         except Exception as exc:
             row = db.get(AnalysisTask, task_id)
             row.status = "failed"
             row.error = str(exc)
+            row.metadata_json = {
+                "analysis_state": {
+                    "current": "failed",
+                    "history": [{"stage": "failed", "status": "error", "extra": {"error": str(exc)}}],
+                }
+            }
             db.commit()
+            log_event("task_failed", task_id=task_id, url=str(payload.url), depth=payload.depth.value, mode="sync", error=str(exc))
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         return _row_to_response(row)
 
@@ -756,6 +792,7 @@ def analyze(payload: AnalyzeRequest, db: Session = Depends(get_db)) -> AnalyzeRe
         raise HTTPException(status_code=503, detail=f"async worker unavailable: {exc}") from exc
 
     analyze_url_task.delay(task_id, str(payload.url), payload.depth.value, callback_url)
+    log_event("task_dispatched", task_id=task_id, url=str(payload.url), depth=payload.depth.value, mode="async")
     row = db.get(AnalysisTask, task_id)
     return _row_to_response(row)
 
@@ -805,7 +842,15 @@ async def analyze_batch(
     task_ids = []
     for u in urls:
         task_id = str(uuid.uuid4())
-        db.add(AnalysisTask(task_id=task_id, url=u, depth=depth, status="queued"))
+        db.add(
+            AnalysisTask(
+                task_id=task_id,
+                url=u,
+                depth=depth,
+                status="queued",
+                metadata_json={"analysis_state": {"current": "queued", "history": [{"stage": "queued", "status": "ok"}]}},
+            )
+        )
         task_ids.append(task_id)
     db.commit()
 
@@ -816,6 +861,7 @@ async def analyze_batch(
 
     for task_id, u in zip(task_ids, urls):
         analyze_url_task.delay(task_id, u, depth, callback_url)
+        log_event("task_dispatched", task_id=task_id, url=u, depth=depth, mode="async_batch")
 
     return {"count": len(task_ids), "task_ids": task_ids}
 
