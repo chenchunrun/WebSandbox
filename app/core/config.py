@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     crawl_timeout_quick_seconds: int = 20
     crawl_timeout_standard_seconds: int = 30
     crawl_timeout_deep_seconds: int = 45
+    max_dom_chars: int = 600000
+    max_network_events: int = 300
+    max_redirect_chain: int = 20
     max_batch_size: int = 1000
     allow_private_target_urls: bool = False
     allow_private_callback_urls: bool = False
@@ -46,6 +49,11 @@ class Settings(BaseSettings):
     sandbox_fallback_to_local_on_timeout: bool = True
     sandbox_fallback_timeout_seconds: int = 45
     celery_task_time_limit_seconds: int = 300
+    queue_quick: str = "quick"
+    queue_standard: str = "standard"
+    queue_deep: str = "deep"
+    queue_retry: str = "retry"
+    worker_queues: str = "quick,standard,deep,retry"
     governance_api_key: str | None = None
 
 

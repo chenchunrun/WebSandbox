@@ -22,6 +22,13 @@ services:
       ISOLATION_MODE: local
       SANDBOX_IMAGE: websandbox-worker:latest
       SANDBOX_NETWORK: websandbox_default
+      MAX_DOM_CHARS: ${MAX_DOM_CHARS:-600000}
+      MAX_NETWORK_EVENTS: ${MAX_NETWORK_EVENTS:-300}
+      MAX_REDIRECT_CHAIN: ${MAX_REDIRECT_CHAIN:-20}
+      QUEUE_QUICK: ${QUEUE_QUICK:-quick}
+      QUEUE_STANDARD: ${QUEUE_STANDARD:-standard}
+      QUEUE_DEEP: ${QUEUE_DEEP:-deep}
+      QUEUE_RETRY: ${QUEUE_RETRY:-retry}
     depends_on:
       - redis
       - postgres
@@ -37,7 +44,7 @@ services:
   worker:
     build: .
     image: websandbox-worker:latest
-    command: celery -A app.celery_app.celery_app worker -l info --concurrency=2
+    command: celery -A app.celery_app.celery_app worker -l info --concurrency=2 --queues ${WORKER_QUEUES:-quick,standard,deep,retry}
     shm_size: 1gb
     environment:
       DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/sandboxdb
@@ -59,6 +66,14 @@ services:
       SANDBOX_CPU_LIMIT: 1.0
       SANDBOX_MEMORY_LIMIT: 1g
       SANDBOX_PIDS_LIMIT: 256
+      MAX_DOM_CHARS: ${MAX_DOM_CHARS:-600000}
+      MAX_NETWORK_EVENTS: ${MAX_NETWORK_EVENTS:-300}
+      MAX_REDIRECT_CHAIN: ${MAX_REDIRECT_CHAIN:-20}
+      QUEUE_QUICK: ${QUEUE_QUICK:-quick}
+      QUEUE_STANDARD: ${QUEUE_STANDARD:-standard}
+      QUEUE_DEEP: ${QUEUE_DEEP:-deep}
+      QUEUE_RETRY: ${QUEUE_RETRY:-retry}
+      WORKER_QUEUES: ${WORKER_QUEUES:-quick,standard,deep,retry}
     depends_on:
       - redis
       - postgres

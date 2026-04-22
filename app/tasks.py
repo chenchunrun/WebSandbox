@@ -1,15 +1,28 @@
 from __future__ import annotations
 
 from app.celery_app import celery_app
+from app.core.config import get_settings
 from app.core.observability import log_event
 from app.db import SessionLocal
 from app.models import AnalysisTask
 from app.pipeline import run_analysis
 
+settings = get_settings()
+
+
+def queue_for_depth(depth: str) -> str:
+    mapping = {
+        "quick": settings.queue_quick,
+        "standard": settings.queue_standard,
+        "deep": settings.queue_deep,
+    }
+    return mapping.get(depth, settings.queue_standard)
+
 
 @celery_app.task(name="app.tasks.analyze_url_task")
 def analyze_url_task(task_id: str, url: str, depth: str, callback_url: str | None = None) -> dict:
     db = SessionLocal()
+    target_queue = queue_for_depth(depth)
     try:
         row = db.get(AnalysisTask, task_id)
         if row:
@@ -21,7 +34,7 @@ def analyze_url_task(task_id: str, url: str, depth: str, callback_url: str | Non
             }
             row.metadata_json = current_meta
             db.commit()
-        log_event("task_running", task_id=task_id, url=url, depth=depth)
+        log_event("task_running", task_id=task_id, url=url, depth=depth, queue=target_queue)
 
         result = run_analysis(task_id=task_id, url=url, depth=depth, callback_url=callback_url)
 
@@ -40,7 +53,14 @@ def analyze_url_task(task_id: str, url: str, depth: str, callback_url: str | Non
             row.processing_time_ms = result.get("processing_time_ms")
             row.error = None
             db.commit()
-        log_event("task_done", task_id=task_id, url=url, depth=depth, processing_time_ms=result.get("processing_time_ms"))
+        log_event(
+            "task_done",
+            task_id=task_id,
+            url=url,
+            depth=depth,
+            queue=target_queue,
+            processing_time_ms=result.get("processing_time_ms"),
+        )
         return result
     except Exception as exc:
         db.rollback()
@@ -55,7 +75,7 @@ def analyze_url_task(task_id: str, url: str, depth: str, callback_url: str | Non
             }
             row.metadata_json = current_meta
             db.commit()
-        log_event("task_failed", task_id=task_id, url=url, depth=depth, error=str(exc))
+        log_event("task_failed", task_id=task_id, url=url, depth=depth, queue=target_queue, error=str(exc))
         raise
     finally:
         db.close()

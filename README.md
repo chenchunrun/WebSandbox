@@ -76,6 +76,13 @@ docker compose up --build
 - `SANDBOX_FALLBACK_TIMEOUT_SECONDS=45`
 - `CELERY_TASK_TIME_LIMIT_SECONDS=300`
 
+默认启用队列分级与基础资源预算（可按环境调整）：
+- 队列分级：`QUEUE_QUICK` / `QUEUE_STANDARD` / `QUEUE_DEEP` / `QUEUE_RETRY`
+- Worker 消费队列：`WORKER_QUEUES=quick,standard,deep,retry`
+- DOM 字符预算：`MAX_DOM_CHARS=600000`
+- XHR/Fetch 事件预算：`MAX_NETWORK_EVENTS=300`
+- 重定向链预算：`MAX_REDIRECT_CHAIN=20`
+
 模型治理接口可选鉴权：
 - 设置 `GOVERNANCE_API_KEY` 后，所有 `/model/*` 接口必须携带 `X-API-Key`。
 - 建议同时携带 `X-Actor`（用户名/服务名），用于审计归因。

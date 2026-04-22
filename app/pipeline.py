@@ -154,6 +154,7 @@ def run_analysis(task_id: str, url: str, depth: str, callback_url: str | None = 
             "features": features,
             "cta_interaction": artifacts.cta_interaction,
             "network_event_count": len(artifacts.network_events),
+            "resource_budget": (artifacts.raw_response or {}).get("resource_budget", {}),
             "isolation_mode": settings.isolation_mode,
             "execution": runner.last_execution,
             "analysis_completeness": analysis_completeness,

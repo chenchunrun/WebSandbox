@@ -787,12 +787,23 @@ def analyze(payload: AnalyzeRequest, db: Session = Depends(get_db)) -> AnalyzeRe
         return _row_to_response(row)
 
     try:
-        from app.tasks import analyze_url_task
+        from app.tasks import analyze_url_task, queue_for_depth
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"async worker unavailable: {exc}") from exc
 
-    analyze_url_task.delay(task_id, str(payload.url), payload.depth.value, callback_url)
-    log_event("task_dispatched", task_id=task_id, url=str(payload.url), depth=payload.depth.value, mode="async")
+    target_queue = queue_for_depth(payload.depth.value)
+    analyze_url_task.apply_async(
+        args=(task_id, str(payload.url), payload.depth.value, callback_url),
+        queue=target_queue,
+    )
+    log_event(
+        "task_dispatched",
+        task_id=task_id,
+        url=str(payload.url),
+        depth=payload.depth.value,
+        mode="async",
+        queue=target_queue,
+    )
     row = db.get(AnalysisTask, task_id)
     return _row_to_response(row)
 
@@ -855,13 +866,17 @@ async def analyze_batch(
     db.commit()
 
     try:
-        from app.tasks import analyze_url_task
+        from app.tasks import analyze_url_task, queue_for_depth
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"async worker unavailable: {exc}") from exc
 
     for task_id, u in zip(task_ids, urls):
-        analyze_url_task.delay(task_id, u, depth, callback_url)
-        log_event("task_dispatched", task_id=task_id, url=u, depth=depth, mode="async_batch")
+        target_queue = queue_for_depth(depth)
+        analyze_url_task.apply_async(
+            args=(task_id, u, depth, callback_url),
+            queue=target_queue,
+        )
+        log_event("task_dispatched", task_id=task_id, url=u, depth=depth, mode="async_batch", queue=target_queue)
 
     return {"count": len(task_ids), "task_ids": task_ids}
 

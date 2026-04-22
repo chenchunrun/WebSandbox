@@ -140,6 +140,7 @@ async def crawl_url(url: str, depth: str, task_id: str, timeout_seconds: int | N
         )
 
         network_events: list[dict] = []
+        network_events_truncated = False
         page: Page = await context.new_page()
 
         async def route_handler(route):
@@ -155,8 +156,12 @@ async def crawl_url(url: str, depth: str, task_id: str, timeout_seconds: int | N
         await page.route("**/*", route_handler)
 
         def on_response(resp):
+            nonlocal network_events_truncated
             resource_type = resp.request.resource_type
             if resource_type in {"xhr", "fetch"}:
+                if len(network_events) >= settings.max_network_events:
+                    network_events_truncated = True
+                    return
                 network_events.append(
                     {
                         "url": resp.url,
@@ -177,6 +182,10 @@ async def crawl_url(url: str, depth: str, task_id: str, timeout_seconds: int | N
 
         await page.wait_for_timeout(1800)
         html = await page.content()
+        dom_truncated = False
+        if len(html) > settings.max_dom_chars:
+            html = html[: settings.max_dom_chars]
+            dom_truncated = True
 
         desktop_s3: str | None = None
         try:
@@ -208,11 +217,20 @@ async def crawl_url(url: str, depth: str, task_id: str, timeout_seconds: int | N
             else:
                 ssl_info = ssl_raw
         redirect_chain = _build_redirect_chain(response) if response else [url]
+        redirect_chain_truncated = False
+        if len(redirect_chain) > settings.max_redirect_chain:
+            redirect_chain = redirect_chain[: settings.max_redirect_chain]
+            redirect_chain_truncated = True
 
         raw_response = {
             "status": response.status if response else None,
             "headers": raw_headers,
             "url": response.url if response else url,
+            "resource_budget": {
+                "dom_truncated": dom_truncated,
+                "network_events_truncated": network_events_truncated,
+                "redirect_chain_truncated": redirect_chain_truncated,
+            },
         }
 
         await context.close()
